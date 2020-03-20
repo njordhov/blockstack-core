@@ -631,7 +631,7 @@ fn misplaced_tuple_literal() {
         "(let {id 1337} id)"
     ];
     let mut expected: Vec<Error> = vec![
-        CheckErrors::BadSyntaxBinding.into(),
+        CheckErrors::BadLetSyntax.into(),
     ];
     for (test, expected_err) in tests.iter().zip(expected.drain(..)) {
         let outcome = execute(test).unwrap_err();

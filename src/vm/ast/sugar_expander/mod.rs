@@ -61,8 +61,7 @@ impl SugarExpander {
                                      .map(|pair| pair.to_vec().into_boxed_slice())
                                      .map(SymbolicExpression::list)
                                      .collect::<Vec<_>>();
-                    pairs.insert(0, SymbolicExpression::atom("tuple".to_string().try_into().unwrap()));
-                    SymbolicExpression::list(pairs.into_boxed_slice())
+                    SymbolicExpression::tuple(pairs.into_boxed_slice())
                 },
                 PreSymbolicExpressionType::SugaredContractIdentifier(contract_name) => {
                     let contract_identifier = QualifiedContractIdentifier::new(self.issuer.clone(), contract_name);
