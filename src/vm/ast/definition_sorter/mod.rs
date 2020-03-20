@@ -6,6 +6,7 @@ use vm::functions::NativeFunctions;
 use vm::functions::define::DefineFunctions;
 use vm::ast::types::{ContractAST, BuildASTPass};
 use vm::ast::errors::{ParseResult, ParseError, ParseErrors};
+use vm::costs::{CostTracker, cost_functions};
 use vm::types::{Value};
 
 #[cfg(test)]
@@ -13,29 +14,25 @@ mod tests;
 
 pub struct DefinitionSorter {
     graph: Graph,
-    top_level_expressions_map: HashMap<ClarityName, TopLevelExpressionIndex>   
-}
-
-impl BuildASTPass for DefinitionSorter {
-    
-    fn run_pass(contract_ast: &mut ContractAST) -> ParseResult<()> {
-        let mut pass = DefinitionSorter::new();
-        pass.run(contract_ast)?;
-        Ok(())
-    }
+    top_level_expressions_map: HashMap<ClarityName, TopLevelExpressionIndex>
 }
 
 impl <'a> DefinitionSorter {
 
     fn new() -> Self {
-        Self { 
+        Self {
             top_level_expressions_map: HashMap::new(),
             graph: Graph::new()
         }
     }
 
-    pub fn run(&mut self, contract_ast: &mut ContractAST) -> ParseResult<()> {
+    pub fn run_pass<T: CostTracker>(contract_ast: &mut ContractAST, accounting: &mut T) -> ParseResult<()> {
+        let mut pass = DefinitionSorter::new();
+        pass.run(contract_ast, accounting)?;
+        Ok(())
+    }
 
+    pub fn run<T: CostTracker>(&mut self, contract_ast: &mut ContractAST, accounting: &mut T) -> ParseResult<()> {
         let exprs = contract_ast.pre_expressions[..].to_vec();
         for (expr_index, expr) in exprs.iter().enumerate() {
             self.graph.add_node(expr_index);
@@ -53,9 +50,11 @@ impl <'a> DefinitionSorter {
             self.probe_for_dependencies(&expr, expr_index)?;
         }
 
+        runtime_cost!(cost_functions::AST_CYCLE_DETECTION, accounting, self.graph.edges_count()?)?;
+
         let mut walker = GraphWalker::new();
         let sorted_indexes = walker.get_sorted_dependencies(&self.graph)?;
-        
+
         if let Some(deps) = walker.get_cycling_dependencies(&self.graph, &sorted_indexes) {
             let mut deps_props = vec![];
             for i in deps.iter() {
@@ -84,7 +83,7 @@ impl <'a> DefinitionSorter {
                 }
                 Ok(())
             },
-            TraitReference(ref name) => { 
+            TraitReference(ref name) => {
                 if let Some(dep) = self.top_level_expressions_map.get(name) {
                     if dep.atom_index != expr.id {
                         self.graph.add_directed_edge(tle_index, dep.expr_index);
@@ -94,7 +93,7 @@ impl <'a> DefinitionSorter {
             },
             List(ref exprs) => {
                 // Avoid looking for dependencies in tuples
-                // TODO: Eliminate special handling of tuples as it is a separate expression type
+                // TODO: Eliminate special handling of tuples as it is a separate presymbolic expression type
                 if let Some((function_name, function_args)) = exprs.split_first() {
                     if let Some(function_name) = function_name.match_atom() {
                         if let Some(define_function) = DefineFunctions::lookup_by_name(function_name) {
@@ -114,7 +113,7 @@ impl <'a> DefinitionSorter {
                                     if function_args.len() == 2 {
                                         self.probe_for_dependencies_in_define_args(&function_args[0], tle_index)?;
                                         self.probe_for_dependencies(&function_args[1], tle_index)?;
-                                    } 
+                                    }
                                     return Ok(());
                                 },
                                 DefineFunctions::Map => {
@@ -128,14 +127,14 @@ impl <'a> DefinitionSorter {
                                 DefineFunctions::Trait => {
                                     if function_args.len() != 2 {
                                         return Ok(())
-                                    } 
+                                    }
                                     if let Some(trait_sig) = function_args[1].match_list() {
                                         for func_sig in trait_sig.iter() {
                                             if let Some(func_sig) = func_sig.match_list() {
                                                 if func_sig.len() == 3 {
                                                     self.probe_for_dependencies(&func_sig[1], tle_index)?;
                                                     self.probe_for_dependencies(&func_sig[2], tle_index)?;
-                                                }     
+                                                }
                                             }
                                         }
                                     }
@@ -157,7 +156,7 @@ impl <'a> DefinitionSorter {
                                         self.probe_for_dependencies_in_tuple(&function_args[1], tle_index)?;
                                     }
                                     return Ok(());
-                                }, 
+                                },
                                 NativeFunctions::SetEntry | NativeFunctions::InsertEntry => {
                                     // Args: [map-name, tuple-keys, tuple-values]: handle tuple-keys and tuple-values as tuples
                                     if function_args.len() == 3 {
@@ -166,7 +165,7 @@ impl <'a> DefinitionSorter {
                                         self.probe_for_dependencies_in_tuple(&function_args[2], tle_index)?;
                                     }
                                     return Ok(());
-                                }, 
+                                },
                                 NativeFunctions::ContractCall => {
                                     // Args: [contract-name, function-name, ...]: ignore contract-name, function-name, handle rest
                                     if function_args.len() > 2 {
@@ -182,7 +181,7 @@ impl <'a> DefinitionSorter {
                                         self.probe_for_dependencies_in_tuple(&function_args[2], tle_index)?;
                                     }
                                     return Ok(());
-                                }, 
+                                },
                                 NativeFunctions::Let => {
                                     // Args: [((name-1 value-1) (name-2 value-2)), ...]: handle 1st arg as a tuple
                                     if function_args.len() > 1 {
@@ -233,10 +232,10 @@ impl <'a> DefinitionSorter {
     fn probe_for_dependencies_in_tuple_list(&mut self, tuples: &[PreSymbolicExpression], tle_index: usize) -> ParseResult<()> {
         for index in 0..tuples.len() {
             self.probe_for_dependencies_in_tuple(&tuples[index], tle_index)?;
-        } 
+        }
         Ok(())
     }
-    
+
     fn probe_for_dependencies_in_define_args(&mut self, expr: &PreSymbolicExpression, tle_index: usize) -> ParseResult<()> {
         if let Some(func_sig) = expr.match_list() {
             // Func definitions can look like:
@@ -250,7 +249,7 @@ impl <'a> DefinitionSorter {
                             self.probe_for_dependencies(&pair[1], tle_index)?;
                         }
                     }
-                }    
+                }
             }
         }
         Ok(())
@@ -308,7 +307,7 @@ impl Graph {
         let list = self.adjacency_list.get_mut(src_expr_index).unwrap();
         list.push(dst_expr_index);
     }
-    
+
     fn get_node_descendants(&self, expr_index: usize) -> Vec<usize> {
         self.adjacency_list[expr_index].clone()
     }
@@ -317,7 +316,18 @@ impl Graph {
         self.adjacency_list[expr_index].len() > 0
     }
 
-    fn nodes_count(&self) -> usize { self.adjacency_list.len() }
+    fn nodes_count(&self) -> usize {
+        self.adjacency_list.len()
+    }
+
+    fn edges_count(&self) -> ParseResult<u64> {
+        let mut total: u64 = 0;
+        for node in self.adjacency_list.iter() {
+            total = total.checked_add(node.len() as u64)
+                .ok_or_else(|| ParseErrors::CostOverflow)?;
+        }
+        Ok(total)
+    }
 }
 
 struct GraphWalker {
@@ -374,8 +384,7 @@ impl GraphWalker {
         }
 
         let nodes = HashSet::from_iter(sorted_indexes.iter().cloned());
-        let deps = nodes.difference(&tainted).map(|i| *i).collect();        
-        Some(deps) 
+        let deps = nodes.difference(&tainted).map(|i| *i).collect();
+        Some(deps)
     }
 }
-

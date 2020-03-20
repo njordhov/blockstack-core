@@ -56,7 +56,7 @@ fn test_at_block_good() {
             let value = env.eval_read_only(&c, &command).unwrap();
             assert_eq!(value, Value::Int(expected_value));
         }
-        
+
         owned_env.execute_transaction(p1, c, to_exec, &vec![])
             .map(|(x, _)| x)
     }
@@ -91,7 +91,7 @@ fn test_at_block_missing_defines() {
             "(define-map datum ((id bool)) ((value int)))
 
              (define-public (flip)
-               (let ((current (default-to (get value (map-get?! datum ((id 'true)))) 0)))
+               (let ((current (default-to (get value (map-get?! datum {id 'true})) 0)))
                  (map-set datum {id 'true} (if (is-eq 1 current) 0 1))
                  (ok current)))";
 
@@ -214,7 +214,7 @@ where F0: FnOnce(&mut OwnedEnvironment),
     }
 
     marf_kv.test_commit();
-    
+
 }
 
 fn initialize_contract(owned_env: &mut OwnedEnvironment) {
@@ -257,7 +257,7 @@ fn branched_execution(owned_env: &mut OwnedEnvironment, expect_success: bool) {
     {
         let mut env = owned_env.get_exec_environment(None);
         let command = format!("(get-balance {})", p1_str);
-        let balance = env.eval_read_only(&contract_identifier, 
+        let balance = env.eval_read_only(&contract_identifier,
                                          &command).unwrap();
         let expected = if expect_success {
             10
@@ -268,7 +268,7 @@ fn branched_execution(owned_env: &mut OwnedEnvironment, expect_success: bool) {
     }
 
     let (result, _) = owned_env.execute_transaction(Value::Principal(PrincipalData::Standard(p1_address)),
-                                                    contract_identifier, 
+                                                    contract_identifier,
                                                     "destroy",
                                                     &symbols_from_values(vec![Value::UInt(10)])).unwrap();
 
@@ -278,4 +278,3 @@ fn branched_execution(owned_env: &mut OwnedEnvironment, expect_success: bool) {
         assert!(is_err_code(&result, 30))
     }
 }
-
