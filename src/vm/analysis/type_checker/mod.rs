@@ -464,7 +464,7 @@ impl <'a, 'b> TypeChecker <'a, 'b> {
                 self.type_check_function_application(expression, context)?
             },
             Tuple(ref expression) => {
-                self.type_check_function_application(expression, context)?
+                // TODO: check inner types for tuple properties
             },
             TraitReference(_, _) | Field(_) => {
                 return Err(CheckErrors::UnexpectedTraitOrFieldReference.into());
